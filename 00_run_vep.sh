@@ -1,10 +1,6 @@
 # このスクリプトのディレクトリ
 DIR="$(cd "$(dirname "$0")" && pwd)"
 
-# （重要）VEPキャッシュのbindを忘れずに。必要なら環境に合わせて修正
-#export SINGULARITY_BINDPATH=$DIR/vep_data:/cache
-
-
 # Run Ensembl VEP 115.0 using SLURM and Singularity
 #  --input ${DIR}/../togovar_vcf/grch38/gnomad.v4.1.sv.sites_0000.vcf.gz \
 #  --input ${DIR}/../ensembl-vep/examples/homo_sapiens_GRCh38_mini.vcf.gz \
