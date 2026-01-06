@@ -42,5 +42,5 @@ nextflow run nextflow \
   -resume
 }
 
-
-run_failed_chunks
+run
+#run_failed_chunks
