@@ -6,9 +6,10 @@ set -euo pipefail
 DIR="$(cd "$(dirname "$0")" && pwd)"
 
 #VCF=/home/mitsuhashi/togovar_vcf/grch38/gnomad.exomes.v4.1.noinfo.sites.chr22.vcf.bgz
-#VCF=/home/mitsuhashi/togovar_vcf/test/jogo.chr22.vcf.gz
+#VCF=/home/mitsuhashi/togovar_vcf/test/jogo.chr1.vcf.gz
 #VCF=/home/mitsuhashi/togovar_vcf/test/rs671.vcf.bgz
 #VCF=/home/mitsuhashi/togovar_vcf/test/jogo.chr22_100.vcf.gz
+#VCF=/home/mitsuhashi/togovar_vcf/grch38/clinvar.vcf.gz
 #VCF=/home/mitsuhashi/togovar_vcf/grch38/clinvar.vcf.gz
 
 VCF=/home/mitsuhashi/togovar_vcf/grch38
@@ -26,6 +27,7 @@ nextflow run nextflow \
   --outdir "${DIR}/grch38" \
   -resume
 }
+
 
 #
 # failed-chunkだけを再実行する
