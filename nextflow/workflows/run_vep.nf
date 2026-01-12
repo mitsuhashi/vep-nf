@@ -127,12 +127,19 @@ process runVEPonVCF {
   rc=\$?
   set -e
 
-  if [[ \$rc -eq 0 && -s "\${json_prefix}.json" ]]; then
+  vcf_n=\$(zgrep -vc '^#' "${vcf_chunk}" 2>/dev/null || true)
+
+  json_n=0
+  if [[ -s "\${json_prefix}.json" ]]; then
+    json_n=\$(wc -l < "\${json_prefix}.json" | tr -d ' ')
+  fi
+
+  if [[ \$rc -eq 0 && -s "\${json_prefix}.json" && "\$vcf_n" -eq "\$json_n" ]]; then
     gzip -f "\${json_prefix}.json"
-    printf "%s\t%s\tOK\t%d\n" "${meta.vcf_stem}" "${meta.chunk_stem}" "\$rc" > "$status"
+    printf "%s\\t%s\\tOK\\t%d\\t%d\\t%d\\n" "${meta.vcf_stem}" "${meta.chunk_stem}" "\$rc" "\$vcf_n" "\$json_n" > "\$status"
   else
     rm -f "\${json_prefix}.json" "\${json_prefix}.json.gz" || true
-    printf "%s\t%s\tFAIL\t%d\n" "${meta.vcf_stem}" "${meta.chunk_stem}" "\$rc" > "$status"
+    printf "%s\\t%s\\tFAIL\\t%d\\t%d\\t%d\\n" "${meta.vcf_stem}" "${meta.chunk_stem}" "\$rc" "\$vcf_n" "\$json_n" > "\$status"
   fi
 
   exit 0
@@ -159,7 +166,7 @@ process summarizeFailedChunks {
   set -euo pipefail
   mkdir -p qc
 
-  printf "vcf_stem\\tchunk_stem\\tstatus\\trc\\n" > qc/status.tsv
+  printf "vcf_stem\\tchunk_stem\\tstatus\\trc\\tvcf_n\\tjson_n\\n" > qc/status.tsv
   : > qc/failed-chunks.tsv
 
   for f in ${status_files}; do
@@ -170,7 +177,6 @@ process summarizeFailedChunks {
 
     st=\$(echo "\$line" | cut -f3)
     if [[ "\$st" != "OK" ]]; then
-      # 形式: vcf_stem<TAB>chunk_stem
       echo "\$line" | cut -f1,2 >> qc/failed-chunks.tsv
     fi
   done
