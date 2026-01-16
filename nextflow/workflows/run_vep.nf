@@ -138,7 +138,7 @@ process runVEPonVCF {
     gzip -f "\${json_prefix}.json"
     printf "%s\\t%s\\tOK\\t%d\\t%d\\t%d\\n" "${meta.vcf_stem}" "${meta.chunk_stem}" "\$rc" "\$vcf_n" "\$json_n" > "\$status"
   else
-    rm -f "\${json_prefix}.json" "\${json_prefix}.json.gz" || true
+    gzip -f "\${json_prefix}.json"
     printf "%s\\t%s\\tFAIL\\t%d\\t%d\\t%d\\n" "${meta.vcf_stem}" "${meta.chunk_stem}" "\$rc" "\$vcf_n" "\$json_n" > "\$status"
   fi
 
