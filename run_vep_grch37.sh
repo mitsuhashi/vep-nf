@@ -32,11 +32,25 @@ nextflow run nextflow \
   -work-dir "./work" \
   --vep_config "${DIR}/vep_grch37.ini" \
   --input "$VCF" \
-  --outdir "${DIR}/grch38" \
-  --failed_chunks "${DIR}/grch38/jogo.chr22_100/qc/failed-chunks.tsv" \
-  --rerun_failed \
-  -resume
+  --outdir "${DIR}/grch37" \
+  --failed_chunks "${DIR}/grch37/jogo.chr22_100/qc/failed-chunks.tsv" \
+  --rerun_failed
+}
+
+#
+# failed-chunk内のVCFエントリーを1件ずつVEPにかけて原因entryを絞る
+#
+isolate_failed_entries() {
+nextflow run nextflow \
+  -profile slurm,singularity \
+  -work-dir "./work" \
+  --vep_config "${DIR}/vep_grch37.ini" \
+  --input "$VCF" \
+  --outdir "${DIR}/grch37" \
+  --failed_chunks "${DIR}/grch37/jogo.chr22_100/qc/failed-chunks.tsv" \
+  --isolate_failed_entries
 }
 
 run
 #run_failed_chunks
+#isolate_failed_entries

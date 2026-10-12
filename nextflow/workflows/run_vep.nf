@@ -9,6 +9,7 @@ params.cpus          = params.cpus ?: 1
 params.outdir        = params.outdir ?: 'outdir'
 params.rerun_failed  = params.rerun_failed ?: false
 params.failed_chunks = params.failed_chunks ?: null
+params.isolate_failed_entries = params.isolate_failed_entries ?: false
 
 // -----------------------
 // Processes
@@ -183,6 +184,95 @@ process summarizeFailedChunks {
   """
 }
 
+process isolateFailedEntries {
+  tag { "${meta.vcf_stem}:${meta.chunk_stem}" }
+  cpus params.cpus
+  label 'vep'
+
+  errorStrategy 'ignore'
+
+  input:
+  tuple val(meta), path(vcf_chunk), path(vcf_chunk_tbi), path(vep_config)
+
+  output:
+  tuple val(meta), path("isolate-status.${meta.vcf_stem}.${meta.chunk_stem}.tsv")
+
+  script:
+  def status = "isolate-status.${meta.vcf_stem}.${meta.chunk_stem}.tsv"
+  """
+  set -euo pipefail
+
+  status="${status}"
+  printf "vcf_stem\\tchunk_stem\\trecord_index\\tchrom\\tpos\\tid\\tref\\talt\\tstatus\\trc\\tjson_n\\treason\\n" > "\$status"
+
+  gzip -cd "${vcf_chunk}" | awk '/^#/ {print}' > header.vcf
+  gzip -cd "${vcf_chunk}" | awk -v OFS='\\t' '!/^#/ {print ++n, \$0}' > records.tsv
+
+  while IFS=\$'\\t' read -r record_index chrom pos id ref alt rest; do
+    rm -f single.vcf single.json single.json.gz
+    cp header.vcf single.vcf
+    printf "%s\\t%s\\t%s\\t%s\\t%s" "\$chrom" "\$pos" "\$id" "\$ref" "\$alt" >> single.vcf
+    if [[ -n "\${rest:-}" ]]; then
+      printf "\\t%s" "\$rest" >> single.vcf
+    fi
+    printf "\\n" >> single.vcf
+
+    set +e
+    vep --config "${vep_config}" --input_file single.vcf --output_file single.json
+    rc=\$?
+    set -e
+
+    json_n=0
+    if [[ -s single.json ]]; then
+      json_n=\$(wc -l < single.json | tr -d ' ')
+    fi
+
+    if [[ \$rc -eq 0 && -s single.json && "\$json_n" -eq 1 ]]; then
+      printf "%s\\t%s\\t%s\\t%s\\t%s\\t%s\\t%s\\t%s\\tOK\\t%d\\t%d\\t%s\\n" \
+        "${meta.vcf_stem}" "${meta.chunk_stem}" "\$record_index" "\$chrom" "\$pos" "\$id" "\$ref" "\$alt" "\$rc" "\$json_n" "." >> "\$status"
+    else
+      reason="vep_failed_or_missing_json"
+      if [[ \$rc -eq 0 && -s single.json && "\$json_n" -ne 1 ]]; then
+        reason="json_count_mismatch"
+      fi
+      printf "%s\\t%s\\t%s\\t%s\\t%s\\t%s\\t%s\\t%s\\tFAIL\\t%d\\t%d\\t%s\\n" \
+        "${meta.vcf_stem}" "${meta.chunk_stem}" "\$record_index" "\$chrom" "\$pos" "\$id" "\$ref" "\$alt" "\$rc" "\$json_n" "\$reason" >> "\$status"
+    fi
+  done < records.tsv
+  """
+}
+
+process summarizeIsolatedEntries {
+  tag { meta.vcf_stem }
+  cpus 1
+  label 'bcftools'
+
+  input:
+  tuple val(meta), path(status_files)
+
+  output:
+  tuple val(meta),
+        path("qc/isolate-status.tsv"),
+        path("qc/failed-entries.tsv")
+
+  publishDir { "${params.outdir}/${meta.vcf_stem}" }, mode: 'copy', overwrite: true
+
+  script:
+  """
+  set -euo pipefail
+  mkdir -p qc
+
+  printf "vcf_stem\\tchunk_stem\\trecord_index\\tchrom\\tpos\\tid\\tref\\talt\\tstatus\\trc\\tjson_n\\treason\\n" > qc/isolate-status.tsv
+  : > qc/failed-entries.tsv
+
+  for f in ${status_files}; do
+    tail -n +2 "\$f" >> qc/isolate-status.tsv
+  done
+
+  awk -F'\\t' 'NR == 1 || \$9 != "OK"' qc/isolate-status.tsv > qc/failed-entries.tsv
+  """
+}
+
 // -----------------------
 // Workflow (names keep: NF_VEP:vep:*)
 // -----------------------
@@ -228,10 +318,10 @@ workflow vep {
           tuple(meta, chunk_vcf, chunk_tbi, vep_config)
         }
 
-    // rerun_failed: failed-chunks.tsv の (vcf_stem\tchunk_stem) のみ通す
+    // rerun_failed/isolate_failed_entries: failed-chunks.tsv の (vcf_stem\tchunk_stem) のみ通す
     chunks_for_vep = chunks
-    if (params.rerun_failed) {
-      if (!params.failed_chunks) error "ERROR: --failed_chunks is required with --rerun_failed"
+    if (params.rerun_failed || params.isolate_failed_entries) {
+      if (!params.failed_chunks) error "ERROR: --failed_chunks is required with --rerun_failed or --isolate_failed_entries"
       def fc = file(params.failed_chunks)
       if (!fc.exists()) error "ERROR: --failed_chunks not found: ${params.failed_chunks}"
 
@@ -248,22 +338,38 @@ workflow vep {
    
     }
 
-    // group status files per VCF then write qc files
-    // runVEPonVCF の戻りを (meta, status_file) に落とす
-    vep_status =
-      runVEPonVCF(chunks_for_vep)
-        .map { meta2, json_gz, status_file -> tuple(meta2, status_file) }
+    if (params.isolate_failed_entries) {
+      isolated_status =
+        isolateFailedEntries(chunks_for_vep)
+          .map { meta2, status_file -> tuple(meta2, status_file) }
 
-    // vcf単位でグループ化して (meta, [status_files...]) にする
-    status_by_vcf =
-    vep_status
-      .map { meta2, status_file ->
-        def meta_vcf = [ vcf_stem: meta2.vcf_stem ]   // ★ここがポイント（chunk_stemを落とす）
-        tuple(meta_vcf, status_file)
-      }
-      .groupTuple()
+      isolated_by_vcf =
+        isolated_status
+          .map { meta2, status_file ->
+            def meta_vcf = [ vcf_stem: meta2.vcf_stem ]
+            tuple(meta_vcf, status_file)
+          }
+          .groupTuple()
 
-    summarizeFailedChunks(status_by_vcf)
+      summarizeIsolatedEntries(isolated_by_vcf)
+    } else {
+      // group status files per VCF then write qc files
+      // runVEPonVCF の戻りを (meta, status_file) に落とす
+      vep_status =
+        runVEPonVCF(chunks_for_vep)
+          .map { meta2, json_gz, status_file -> tuple(meta2, status_file) }
+
+      // vcf単位でグループ化して (meta, [status_files...]) にする
+      status_by_vcf =
+      vep_status
+        .map { meta2, status_file ->
+          def meta_vcf = [ vcf_stem: meta2.vcf_stem ]   // ★ここがポイント（chunk_stemを落とす）
+          tuple(meta_vcf, status_file)
+        }
+        .groupTuple()
+
+      summarizeFailedChunks(status_by_vcf)
+    }
 }
 
 workflow NF_VEP {
